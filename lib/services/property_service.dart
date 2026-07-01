@@ -121,7 +121,7 @@ class PropertyService extends ApiClient {
   Future<bool> removeFavorite(int id) async {
     return await _guardedRequest(() async {
       final response = await request(() async => http.delete(
-        Uri.parse("${ApiConstants.favorites}?property=$id"),
+        Uri.parse("${ApiConstants.favorites}$id/"),
         headers: await getHeaders(isProtected: true),
       ));
 
