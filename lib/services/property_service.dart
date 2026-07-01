@@ -1,0 +1,167 @@
+import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+import '../core/network/api_client.dart';
+import '../core/network/api_constants.dart';
+import '../models/property_model.dart';
+import '../models/user_model.dart';
+import 'auth_service.dart';
+
+class PropertyService extends ApiClient {
+  final AuthService _authService = AuthService();
+
+  // --- نظام الكاش للمفضلة (محسن لضمان المزامنة) ---
+  static final Set<int> _favoritesCache = {};
+  static bool _favoritesLoaded = false;
+
+  Future<T> _guardedRequest<T>(Future<T> Function() fn) async {
+    try {
+      return await fn();
+    } catch (e) {
+      if (e is http.Response && e.statusCode == 401) {
+        final success = await _authService.refreshAccessToken();
+        if (success) return await fn();
+      }
+      rethrow;
+    }
+  }
+
+  /// 1. جلب العقارات (بدون تغيير)
+  Future<List<PropertyModel>> getProperties({Map<String, String>? filters}) async {
+    try {
+      Uri uri = Uri.parse(ApiConstants.properties);
+      Map<String, String> cleanFilters = {};
+      if (filters != null) {
+        filters.forEach((key, value) {
+          if (value.isNotEmpty && value != 'all' && value != 'null') {
+            cleanFilters[key] = value;
+          }
+        });
+      }
+      if (cleanFilters.isNotEmpty) uri = uri.replace(queryParameters: cleanFilters);
+
+      final response = await http.get(uri, headers: await getHeaders()).timeout(const Duration(seconds: 15));
+
+      if (response.statusCode == 200) {
+        final dynamic decodedData = jsonDecode(utf8.decode(response.bodyBytes));
+        List<dynamic> list = [];
+        if (decodedData is Map && decodedData.containsKey('results')) {
+          list = decodedData['results'] as List? ?? [];
+        } else if (decodedData is List) {
+          list = decodedData;
+        }
+        return list.map((json) => PropertyModel.fromJson(json)).toList();
+      }
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /// 2. جلب قائمة المفضلات (تعديل: تحديث الكاش تلقائياً)
+  Future<List<PropertyModel>> getFavorites() async {
+    return await _guardedRequest(() async {
+      final response = await request(() async => http.get(
+        Uri.parse(ApiConstants.favorites),
+        headers: await getHeaders(isProtected: true),
+      ));
+
+      final dynamic decodedData = handleResponse(response);
+      List<dynamic> list = [];
+
+      if (decodedData is Map && decodedData.containsKey('results')) {
+        list = decodedData['results'] as List? ?? [];
+      } else if (decodedData is List) {
+        list = decodedData;
+      }
+
+      final List<PropertyModel> favorites = list
+          .where((item) => item['property'] != null && item['property'] is Map)
+          .map((item) => PropertyModel.fromJson(item['property'] as Map<String, dynamic>))
+          .toList();
+
+      // تحديث الكاش المحلي من السيرفر لضمان المزامنة
+      _favoritesCache.clear();
+      for (var p in favorites) {
+        _favoritesCache.add(p.id);
+      }
+      _favoritesLoaded = true;
+
+      return favorites;
+    });
+  }
+
+  /// 3. التحقق من المفضلة (تعديل: إجبار التحميل إذا لم يكن محملاً)
+  Future<bool> checkIsFavorite(int propertyId) async {
+    if (!_favoritesLoaded) {
+      await getFavorites(); // تحميل البيانات من السيرفر لأول مرة
+    }
+    return _favoritesCache.contains(propertyId);
+  }
+
+  /// 4. إضافة للمفضلة (تعديل: تحديث فوري للكاش)
+  Future<bool> addFavorite(int id) async {
+    return await _guardedRequest(() async {
+      final response = await request(() async => http.post(
+        Uri.parse(ApiConstants.favorites),
+        headers: await getHeaders(isProtected: true),
+        body: jsonEncode({'property': id}),
+      ));
+
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        _favoritesCache.add(id); // إضافة فوري للكاش
+        return true;
+      }
+      return false;
+    });
+  }
+
+  /// 5. حذف من المفضلة (تعديل: حذف فوري من الكاش)
+  Future<bool> removeFavorite(int id) async {
+    return await _guardedRequest(() async {
+      final response = await request(() async => http.delete(
+        Uri.parse("${ApiConstants.favorites}?property=$id"),
+        headers: await getHeaders(isProtected: true),
+      ));
+
+      if (response.statusCode == 204 || response.statusCode == 200) {
+        _favoritesCache.remove(id); // حذف فوري من الكاش
+        return true;
+      }
+      return false;
+    });
+  }
+
+  // --- بقية الدوال (إضافة عقار، بحث، بروفايل) ---
+
+  Future<bool> postPropertyWithImages(Map<String, dynamic> data, List<File> images) async {
+    return await _guardedRequest(() async {
+      var multiRequest = http.MultipartRequest('POST', Uri.parse(ApiConstants.properties));
+      multiRequest.headers.addAll(await getHeaders(isProtected: true));
+      multiRequest.fields['data'] = jsonEncode(data);
+      for (var image in images) {
+        multiRequest.files.add(await http.MultipartFile.fromPath('uploaded_images', image.path));
+      }
+      final response = await http.Response.fromStream(await multiRequest.send());
+      return response.statusCode == 201;
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> searchUsers(String query) async {
+    return await _guardedRequest(() async {
+      final response = await request(() async => http.get(Uri.parse("${ApiConstants.searchUsers}?q=$query"), headers: await getHeaders(isProtected: true)));
+      final data = handleResponse(response);
+      return (data is List) ? data.map((e) => e as Map<String, dynamic>).toList() : [];
+    });
+  }
+
+  Future<UserModel?> getPublicProfile(String username) async {
+    try {
+      final response = await request(() async => http.get(Uri.parse("${ApiConstants.baseUrl}/users/profile/$username/"), headers: await getHeaders()));
+    return UserModel.fromJson(handleResponse(response));
+    } catch (e) {
+    return null;
+    }
+  }
+}
