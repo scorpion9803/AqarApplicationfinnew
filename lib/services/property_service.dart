@@ -135,18 +135,36 @@ class PropertyService extends ApiClient {
 
   // --- بقية الدوال (إضافة عقار، بحث، بروفايل) ---
 
-  Future<bool> postPropertyWithImages(Map<String, dynamic> data, List<File> images) async {
-    return await _guardedRequest(() async {
-      var multiRequest = http.MultipartRequest('POST', Uri.parse(ApiConstants.properties));
-      multiRequest.headers.addAll(await getHeaders(isProtected: true));
-      multiRequest.fields['data'] = jsonEncode(data);
-      for (var image in images) {
-        multiRequest.files.add(await http.MultipartFile.fromPath('uploaded_images', image.path));
+Future<bool> postPropertyWithImages(Map<String, dynamic> data, List<File> images) async {
+  return await _guardedRequest(() async {
+    var request = http.MultipartRequest('POST', Uri.parse(ApiConstants.properties));
+    request.headers.addAll(await getHeaders(isProtected: true));
+
+    // إضافة جميع الحقول النصية كـ form fields (وليس JSON واحد)
+    data.forEach((key, value) {
+      if (value != null) {
+        request.fields[key] = value.toString();
       }
-      final response = await http.Response.fromStream(await multiRequest.send());
-      return response.statusCode == 201;
     });
-  }
+
+    // إضافة الصور (تأكد من أن المفتاح هو 'uploaded_images' كما في الـ Serializer)
+    for (var image in images) {
+      request.files.add(await http.MultipartFile.fromPath(
+        'uploaded_images',
+        image.path,
+      ));
+    }
+
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
+
+    // طباعة رد السيرفر لتسهيل التصحيح (يمكنك إزالته في الإنتاج)
+    print('Response status: ${response.statusCode}');
+    print('Response body: ${response.body}');
+
+    return response.statusCode == 201;
+  });
+}
 
   Future<List<Map<String, dynamic>>> searchUsers(String query) async {
     return await _guardedRequest(() async {

@@ -21,7 +21,27 @@ class _AddPropertyScreenState extends State<AddPropertyScreen> {
   final _priceController = TextEditingController();
   final _areaController = TextEditingController();
   final _descriptionController = TextEditingController();
+  // داخل _AddPropertyScreenState
+  final _countryController = TextEditingController();
+  final _cityController = TextEditingController();
+  final _regionController = TextEditingController();
+  final _latitudeController = TextEditingController();
+  final _longitudeController = TextEditingController();
 
+  // للتفاصيل السكنية (مثال)
+  final _bedroomsController = TextEditingController();
+  final _bathroomsController = TextEditingController();
+
+// ... في الـ build أضف حقول الموقع
+  _buildTextField(_countryController, 'الدولة', Icons.public, isNumber: false),
+  _buildTextField(_cityController, 'المدينة', Icons.location_city, isNumber: false),
+  _buildTextField(_regionController, 'المنطقة (اختياري)', Icons.map, isNumber: false),
+
+// حقول التفاصيل حسب الفئة
+if (_selectedCategory == 'residential') ...[
+  _buildTextField(_bedroomsController, 'عدد غرف النوم', Icons.bed, isNumber: true),
+  _buildTextField(_bathroomsController, 'عدد الحمامات', Icons.bathtub, isNumber: true),
+],
   String _selectedCategory = 'residential';
   String _selectedTransaction = 'sale';
   final List<File> _selectedImages = [];
