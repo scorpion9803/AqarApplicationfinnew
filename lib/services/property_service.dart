@@ -136,35 +136,31 @@ class PropertyService extends ApiClient {
   // --- بقية الدوال (إضافة عقار، بحث، بروفايل) ---
 
 Future<bool> postPropertyWithImages(Map<String, dynamic> data, List<File> images) async {
-  return await _guardedRequest(() async {
-    var request = http.MultipartRequest('POST', Uri.parse(ApiConstants.properties));
-    request.headers.addAll(await getHeaders(isProtected: true));
+    return await _guardedRequest(() async {
+      final request = http.MultipartRequest('POST', Uri.parse(ApiConstants.properties));
+      request.headers.addAll(await getHeaders(isProtected: true));
 
-    // إضافة جميع الحقول النصية كـ form fields (وليس JSON واحد)
-    data.forEach((key, value) {
-      if (value != null) {
-        request.fields[key] = value.toString();
+      // إضافة جميع البيانات كـ JSON واحد في حقل 'data'
+      request.fields['data'] = jsonEncode(data);
+
+      // إضافة الصور (المفتاح 'uploaded_images' كما هو في الـ Serializer)
+      for (final image in images) {
+        request.files.add(
+          await http.MultipartFile.fromPath('uploaded_images', image.path),
+        );
       }
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      // طباعة للتصحيح (يمكن إزالتها في الإنتاج)
+      print('Response status: ${response.statusCode}');
+      print('Response body: ${response.body}');
+
+      return response.statusCode == 201 || response.statusCode == 200;
     });
+  }
 
-    // إضافة الصور (تأكد من أن المفتاح هو 'uploaded_images' كما في الـ Serializer)
-    for (var image in images) {
-      request.files.add(await http.MultipartFile.fromPath(
-        'uploaded_images',
-        image.path,
-      ));
-    }
-
-    final streamedResponse = await request.send();
-    final response = await http.Response.fromStream(streamedResponse);
-
-    // طباعة رد السيرفر لتسهيل التصحيح (يمكنك إزالته في الإنتاج)
-    print('Response status: ${response.statusCode}');
-    print('Response body: ${response.body}');
-
-    return response.statusCode == 201;
-  });
-}
 
   Future<List<Map<String, dynamic>>> searchUsers(String query) async {
     return await _guardedRequest(() async {
